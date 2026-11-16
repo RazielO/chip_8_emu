@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use chip_8_emu::state::State;
 use macroquad::{
-    audio::load_sound,
+    audio::load_sound_from_bytes,
     color::{BLACK, WHITE},
     input::is_key_down,
     math::vec2,
@@ -10,9 +10,9 @@ use macroquad::{
     window::{Conf, clear_background, next_frame, screen_height, screen_width},
 };
 
-const OPERATIONS_PER_SECOND: u64 = 800;
+const OPERATIONS_PER_SECOND: u64 = 1000;
 const FRAMES_PER_SECOND: f64 = 60.0;
-const BEEP_FILE: &str = "assets/beep.wav";
+const SOUND_DATA: &[u8] = include_bytes!("../assets/beep.wav");
 
 fn window_config() -> Conf {
     if std::env::args().len() != 2 {
@@ -68,19 +68,30 @@ async fn game_loop(state: State) {
     loop {
         let frame_start = Instant::now();
 
-        op_budget +=
-            frame_start.duration_since(last_frame).as_secs_f64() * OPERATIONS_PER_SECOND as f64;
+        op_budget = (op_budget
+            + frame_start.duration_since(last_frame).as_secs_f64() * OPERATIONS_PER_SECOND as f64)
+            .min(OPERATIONS_PER_SECOND as f64);
         last_frame = frame_start;
 
-        while op_budget >= 1.0 {
-            match state.get_next_operation() {
-                Ok(op) => state.perform_operation(op),
-                Err(e) => {
-                    println!("{e}");
-                    return;
+        if state.waiting_for_key.is_some()
+            && let Ok(op) = state.get_next_operation()
+        {
+            state.perform_operation(op);
+        }
+
+        if state.waiting_for_key.is_none() {
+            while op_budget >= 1.0 {
+                match state.get_next_operation() {
+                    Ok(op) => state.perform_operation(op),
+                    Err(e) => {
+                        println!("{e}");
+                        return;
+                    }
                 }
+                op_budget -= 1.0;
             }
-            op_budget -= 1.0;
+        } else {
+            op_budget = 0.0;
         }
 
         state.update_timers();
@@ -110,15 +121,13 @@ async fn main() {
 
     let game_file = &args[1];
 
-    let beep_sound = match load_sound(BEEP_FILE).await {
-        Ok(sound) => sound,
-        Err(error) => {
-            println!("Could not load beep file. {error}");
-            return;
+    let mut state = match load_sound_from_bytes(SOUND_DATA).await {
+        Ok(sound) => State::new(sound),
+        Err(_) => {
+            println!("Could not load embedded beep file. Continuing without sound.");
+            State::default()
         }
     };
-
-    let mut state = State::new(beep_sound);
 
     match state.load_game(game_file) {
         Ok(_bytes_read) => {

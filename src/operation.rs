@@ -50,8 +50,8 @@ pub enum Operation {
     SkipIfRegistersNotEquals(usize, usize),
     /// Opcode `ANNN`. Sets the index register `I = NNN`.
     SetI(u16),
-    /// Opcode `BNNN`. Jumps to `NNN + V0`.
-    GotoPlusV0(u16),
+    /// Opcode `BXNN`. Jumps to `NNN + VX`.
+    GotoPlusVX(usize, u16),
     /// Opcode `CXNN`. Sets `VX = rand() & NN`.
     Random(usize, u8),
     /// Opcode `DXYN`. Draws an 8×N sprite at `(VX, VY)` from memory at `I`. `VF` is set to `1` if any lit pixel is erased (collision), `0` otherwise.
@@ -74,11 +74,9 @@ pub enum Operation {
     SetIToSprite(usize),
     /// Opcode `FX33`. Writes the BCD digits of `VX` (hundreds, tens, ones) to `I`, `I+1`, `I+2` respectively. `I` is unchanged.
     SetBinaryCodedDecimal(usize),
-    /// Opcode `FX55`. Writes `V0..=VX` to memory starting at `I`. `I` itself is
-    ///   left unmodified (per the `[d]` note in the reference table; the original interpreter incremented `I`).
+    /// Opcode `FX55`. Writes `V0..=VX` to memory starting at `I`. `I` is moved to `I = I + X + 1`
     RegisterDump(usize),
-    /// Opcode `FX65`. Reads `V0..=VX` from memory starting at `I`. `I` itself is
-    ///   left unmodified (same `[d]` caveat as `RegisterDump`).
+    /// Opcode `FX65`. Reads `V0..=VX` from memory starting at `I`. `I` is moved to `I = I + X + 1`
     RegisterLoad(usize),
 }
 
@@ -114,7 +112,7 @@ impl TryFrom<u16> for Operation {
             0x8 if n == 0xE => Ok(Self::ShiftLAssignRegister(x, y)),
             0x9 if n == 0x0 => Ok(Self::SkipIfRegistersNotEquals(x, y)),
             0xA => Ok(Self::SetI(nnn)),
-            0xB => Ok(Self::GotoPlusV0(nnn)),
+            0xB => Ok(Self::GotoPlusVX(x, nnn)),
             0xC => Ok(Self::Random(x, nn)),
             0xD => Ok(Self::Draw(x, y, n)),
             0xE if nn == 0x9E => Ok(Self::SkipIfKeyEquals(x)),
@@ -376,12 +374,20 @@ mod tests {
         assert_eq!(decode(0xAFFF), Ok(Operation::SetI(0x0FFF)));
     }
 
-    // ---------- BNNN ----------
+    // ---------- BXNN ----------
     #[test]
-    fn goto_plus_v0() {
-        assert_eq!(decode(0xBABC), Ok(Operation::GotoPlusV0(0x0ABC)));
-        assert_eq!(decode(0xB000), Ok(Operation::GotoPlusV0(0x0000)));
-        assert_eq!(decode(0xBFFF), Ok(Operation::GotoPlusV0(0x0FFF)));
+    fn goto_plus_vx() {
+        assert_eq!(decode(0xBABC), Ok(Operation::GotoPlusVX(0xA, 0x0ABC)));
+        assert_eq!(decode(0xB000), Ok(Operation::GotoPlusVX(0x0, 0x0000)));
+        assert_eq!(decode(0xBFFF), Ok(Operation::GotoPlusVX(0xF, 0x0FFF)));
+    }
+
+    #[test]
+    fn goto_plus_vx_uses_high_nibble_as_register() {
+        // 0xB2FF → register 2, address 0x2FF
+        assert_eq!(decode(0xB2FF), Ok(Operation::GotoPlusVX(0x2, 0x2FF)));
+        // 0xB5FF → register 5, address 0x5FF
+        assert_eq!(decode(0xB5FF), Ok(Operation::GotoPlusVX(0x5, 0x5FF)));
     }
 
     // ---------- CXNN ----------
